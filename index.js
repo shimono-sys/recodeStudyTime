@@ -8,26 +8,28 @@ function doPost(e) {
   const events = json.events;
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
-    const userId = event.source.userId;
-    const groupId = event.source.groupId;
+    const userId = event.source.userId || null;
+    const groupId = event.source.groupId || null;
+    const sourceType = event.source.type || null;
+    const roomId = event.source.roomId || null;
     const messageText = event.message.text.trim();
 
     // スプレッドシートに記録
-    handleUserAction(userId, groupId, messageText);
+    handleUserAction(userId, groupId, messageText, sourceType, roomId);
   }
 
   // LINEサーバーへの応答
   return ContentService.createTextOutput(JSON.stringify({ status: 'ok' })).setMimeType(ContentService.MimeType.JSON);
 }
 
-function handleUserAction(userId, groupId, messageText) {
+function handleUserAction(userId, groupId, messageText, sourceType, roomId) {
   const sheet = SpreadsheetApp.openById(SHEET_ID).getActiveSheet();
   const now = new Date();
   const formattedDate = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM/dd');
   const formattedTime = Utilities.formatDate(now, Session.getScriptTimeZone(), 'HH:mm');
 
   // ユーザーのLINEプロフィールを取得
-  const userName = getUserName(userId);
+  const userName = getUserName(userId, sourceType, groupId, roomId);
 
   // 「参加」アクションの場合
   if (messageText === '参加') {
@@ -63,17 +65,33 @@ function handleUserAction(userId, groupId, messageText) {
   }
 }
 
-function getUserName(userId) {
-  const url = 'https://api.line.me/v2/bot/profile/' + userId;
+function getUserName(userId, sourceType, groupId, roomId) {
+  let url;
+  if (sourceType === 'group') {
+    url = `https://api.line.me/v2/bot/group/${groupId}/member/${userId}`;
+  } else if (sourceType === 'room') {
+    url = `https://api.line.me/v2/bot/room/${roomId}/member/${userId}`;
+  } else if (sourceType === 'user') {
+    url = `https://api.line.me/v2/bot/profile/${userId}`;
+  } else {
+    return null; // 不明なsourceType
+  }
+
   const options = {
     method: 'get',
     headers: {
-      Authorization: 'Bearer ' + CHANNEL_ACCESS_TOKEN,
+      Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}`,
     },
   };
-  const response = UrlFetchApp.fetch(url, options);
-  const json = JSON.parse(response.getContentText());
-  return json.displayName || '名前不明';
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    const json = JSON.parse(response.getContentText());
+    return json.displayName || '名前不明';
+  } catch (error) {
+    Logger.log(`Error fetching user profile: ${error.message}`);
+    return null;
+  }
 }
 
 function sendReply(userId, message) {
